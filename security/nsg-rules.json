@@ -1,0 +1,75 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "metadata": {
+    "description": "Regras de NSG para exposição segura de API interna na Azure",
+    "version": "1.0.0",
+    "scope": "Network Security Group - snet-app (API interna)"
+  },
+  "nsg_rules": [
+    {
+      "name": "Allow-GatewayToApp-HTTPS-Inbound",
+      "priority": 100,
+      "direction": "Inbound",
+      "access": "Allow",
+      "protocol": "Tcp",
+      "source_port_range": "*",
+      "destination_port_range": "443",
+      "source_address_prefix": "10.0.1.0/24",
+      "destination_address_prefix": "10.0.2.0/24",
+      "justificativa": "Permite que o Application Gateway (WAF), localizado na snet-web (10.0.1.0/24), alcance a API na snet-app via HTTPS. É a única origem inbound autorizada para a camada de aplicação. Sem esta regra, o WAF não consegue fazer proxy para a API."
+    },
+    {
+      "name": "Allow-AppGateway-Probe-Inbound",
+      "priority": 110,
+      "direction": "Inbound",
+      "access": "Allow",
+      "protocol": "Tcp",
+      "source_port_range": "*",
+      "destination_port_range": "65200-65535",
+      "source_address_prefix": "GatewayManager",
+      "destination_address_prefix": "*",
+      "justificativa": "Obrigatório pela Azure para health probes do Application Gateway v2. A faixa 65200-65535 é reservada para comunicação interna entre o plano de controle do Gateway e as instâncias. Sem esta regra, o Application Gateway entra em estado de falha."
+    },
+    {
+      "name": "Allow-HTTPS-Outbound-Storage",
+      "priority": 100,
+      "direction": "Outbound",
+      "access": "Allow",
+      "protocol": "Tcp",
+      "source_port_range": "*",
+      "destination_port_range": "443",
+      "source_address_prefix": "10.0.2.0/24",
+      "destination_address_prefix": "Storage",
+      "justificativa": "Permite que a API acesse o Azure Storage Account via HTTPS (porta 443). Usa Service Tag 'Storage' em vez de IPs fixos para evitar manutenção manual à medida que a Azure adiciona/remove IPs do serviço. O acesso é autenticado via Managed Identity - esta regra apenas habilita o caminho de rede."
+    },
+    {
+      "name": "Allow-HTTPS-Outbound-AzureAD",
+      "priority": 110,
+      "direction": "Outbound",
+      "access": "Allow",
+      "protocol": "Tcp",
+      "source_port_range": "*",
+      "destination_port_range": "443",
+      "source_address_prefix": "10.0.2.0/24",
+      "destination_address_prefix": "AzureActiveDirectory",
+      "justificativa": "Necessário para que a Managed Identity da API obtenha tokens de acesso do Azure AD (MSAL endpoint). Sem esta regra, as chamadas ao Storage falham com erro de autenticação, pois o token não pode ser adquirido. Usa Service Tag 'AzureActiveDirectory' para manutenção zero dos IPs do endpoint."
+    },
+    {
+      "name": "Deny-All-Inbound",
+      "priority": 4096,
+      "direction": "Inbound",
+      "access": "Deny",
+      "protocol": "*",
+      "source_port_range": "*",
+      "destination_port_range": "*",
+      "source_address_prefix": "0.0.0.0/0",
+      "destination_address_prefix": "*",
+      "justificativa": "Regra de catch-all com menor prioridade (4096 = mais baixa possível). Bloqueia qualquer tráfego inbound que não tenha sido explicitamente permitido pelas regras anteriores. Garante que a API nunca seja acessível diretamente da internet ou de subnets não autorizadas, mesmo que o Application Gateway seja bypassado. Princípio: deny-by-default."
+    }
+  ],
+  "notas": {
+    "service_tags": "Service Tags (Storage, AzureActiveDirectory, GatewayManager) são mantidos pela Microsoft e atualizados automaticamente. Evitam a necessidade de manutenção manual de listas de IPs.",
+    "prioridades": "Prioridades menores têm precedência. Faixa 100-199: regras Allow específicas. Prioridade 4096: deny-all catch-all.",
+    "auditoria": "Todos os fluxos negados são capturados via NSG Flow Logs para auditoria e detecção de anomalias."
+  }
+}
